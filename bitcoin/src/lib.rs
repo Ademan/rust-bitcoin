@@ -96,6 +96,7 @@ mod serde_utils;
 #[macro_use]
 pub mod p2p;
 pub mod address;
+pub mod bip119;
 pub mod bip152;
 pub mod bip158;
 pub mod bip32;
