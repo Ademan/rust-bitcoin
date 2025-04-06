@@ -44,6 +44,7 @@ impl Decodable for DefaultCheckTemplateVerifyHash {
     }
 }
 
+const CTV_ENC_EXPECT_MSG: &str = "hash writes are infallible";
 
 impl DefaultCheckTemplateVerifyHash {
     /// Calculate the BIP-119 default template for a transaction at a particular input index
@@ -53,8 +54,8 @@ impl DefaultCheckTemplateVerifyHash {
         // fallibility
         let mut sha256 = Sha256::engine();
 
-        transaction.version.consensus_encode(&mut sha256).unwrap();
-        transaction.lock_time.consensus_encode(&mut sha256).unwrap();
+        transaction.version.consensus_encode(&mut sha256).expect(CTV_ENC_EXPECT_MSG);
+        transaction.lock_time.consensus_encode(&mut sha256).expect(CTV_ENC_EXPECT_MSG);
 
         let any_script_sigs = transaction.input.iter()
             .any(|input| !input.script_sig.is_empty());
@@ -63,40 +64,40 @@ impl DefaultCheckTemplateVerifyHash {
             let mut script_sig_sha256 = Sha256::engine();
 
             for input in transaction.input.iter() {
-                input.script_sig.consensus_encode(&mut script_sig_sha256).unwrap();
+                input.script_sig.consensus_encode(&mut script_sig_sha256).expect(CTV_ENC_EXPECT_MSG);
             }
 
             let script_sig_sha256 = Sha256::from_engine(script_sig_sha256);
-            script_sig_sha256.consensus_encode(&mut sha256).unwrap();
+            script_sig_sha256.consensus_encode(&mut sha256).expect(CTV_ENC_EXPECT_MSG);
         }
 
         let vin_count: u32 = transaction.input.len() as u32;
-        sha256.write(&vin_count.to_le_bytes()).unwrap();
+        sha256.write(&vin_count.to_le_bytes()).expect(CTV_ENC_EXPECT_MSG);
 
         {
             let mut sequences_sha256 = Sha256::engine();
             for input in transaction.input.iter() {
                 let sequence: u32 = input.sequence.to_consensus_u32();
-                sequences_sha256.write(&sequence.to_le_bytes()).unwrap();
+                sequences_sha256.write(&sequence.to_le_bytes()).expect(CTV_ENC_EXPECT_MSG);
             }
             let sequences_sha256 = Sha256::from_engine(sequences_sha256);
-            sequences_sha256.consensus_encode(&mut sha256).unwrap();
+            sequences_sha256.consensus_encode(&mut sha256).expect(CTV_ENC_EXPECT_MSG);
         }
 
         let vout_count: u32 = transaction.output.len() as u32;
-        sha256.write(&vout_count.to_le_bytes()).unwrap();
+        sha256.write(&vout_count.to_le_bytes()).expect(CTV_ENC_EXPECT_MSG);
 
         {
             let mut outputs_sha256 = Sha256::engine();
             for output in transaction.output.iter() {
-                output.consensus_encode(&mut outputs_sha256).unwrap();
+                output.consensus_encode(&mut outputs_sha256).expect(CTV_ENC_EXPECT_MSG);
             }
 
             let outputs_sha256 = Sha256::from_engine(outputs_sha256);
-            outputs_sha256.consensus_encode(&mut sha256).unwrap();
+            outputs_sha256.consensus_encode(&mut sha256).expect(CTV_ENC_EXPECT_MSG);
         }
 
-        sha256.write(&input_index.to_le_bytes()).unwrap();
+        sha256.write(&input_index.to_le_bytes()).expect(CTV_ENC_EXPECT_MSG);
 
         DefaultCheckTemplateVerifyHash(
             Sha256::from_engine(sha256)
