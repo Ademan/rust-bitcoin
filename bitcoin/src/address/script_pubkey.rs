@@ -14,8 +14,8 @@ use crate::opcodes::all::*;
 use crate::script::witness_program::{WitnessProgram, P2A_PROGRAM};
 use crate::script::witness_version::WitnessVersion;
 use crate::script::{
-    self, Builder, PushBytes, RedeemScriptSizeError, Script, ScriptBuf, ScriptExt as _, ScriptHash,
-    WScriptHash, WitnessScriptSizeError,
+    self, Builder, PushBytes, RedeemScriptSizeError, Script, ScriptBuf, ScriptBufExtPriv,
+    ScriptExt as _, ScriptHash, WScriptHash, WitnessScriptSizeError,
 };
 use crate::taproot::TapNodeHash;
 
@@ -120,12 +120,21 @@ define_extension_trait! {
     pub trait ScriptBufExt impl for ScriptBuf {
         /// Generates P2PK-type of scriptPubkey.
         fn new_p2pk(pubkey: PublicKey) -> Self {
-            Builder::new().push_key(pubkey).push_opcode(OP_CHECKSIG).into_script()
+            let script_length = 1    /* PUSHBYTES_33 */
+                                + 33 /* <pubkey> */
+                                + 1  /* CHECKSIG */;
+            Builder::with_capacity(script_length).push_key(pubkey).push_opcode(OP_CHECKSIG).into_script()
         }
 
         /// Generates P2PKH-type of scriptPubkey.
         fn new_p2pkh(pubkey_hash: PubkeyHash) -> Self {
-            Builder::new()
+            let script_length = 1 /* DUP */
+                                + 1 /* HASH160 */
+                                + 1 /* PUSHBYTES_20 */
+                                + 20 /* <pubkey_hash> */
+                                + 1 /* EQUALVERIFY */
+                                + 1 /* CHECKSIG */;
+            Builder::with_capacity(script_length)
                 .push_opcode(OP_DUP)
                 .push_opcode(OP_HASH160)
                 .push_slice(pubkey_hash)
@@ -136,7 +145,11 @@ define_extension_trait! {
 
         /// Generates P2SH-type of scriptPubkey with a given hash of the redeem script.
         fn new_p2sh(script_hash: ScriptHash) -> Self {
-            Builder::new()
+            let script_length = 1 /* HASH160 */
+                                + 1 /* PUSHBYTES_20 */
+                                + 20 /* <script_hash> */
+                                + 1 /* EQUAL */;
+            Builder::with_capacity(script_length)
                 .push_opcode(OP_HASH160)
                 .push_slice(script_hash)
                 .push_opcode(OP_EQUAL)
@@ -180,9 +193,12 @@ define_extension_trait! {
 
         /// Generates P2WSH-type of scriptPubkey with a given [`WitnessProgram`].
         fn new_witness_program(witness_program: &WitnessProgram) -> Self {
-            Builder::new()
+            let program = witness_program.program();
+            let script_length = 1 /* Version */
+                                + ScriptBuf::reserved_len_for_slice(program.len()) /* <push op(s)> <program> */;
+            Builder::with_capacity(script_length)
                 .push_opcode(witness_program.version().into())
-                .push_slice(witness_program.program())
+                .push_slice(program)
                 .into_script()
         }
     }
@@ -200,7 +216,9 @@ pub(super) fn new_witness_program_unchecked<T: AsRef<PushBytes>>(
     debug_assert!(program.len() >= 2 && program.len() <= 40);
     // In SegWit v0, the program must be either 20 (P2WPKH) bytes or 32 (P2WSH) bytes long
     debug_assert!(version != WitnessVersion::V0 || program.len() == 20 || program.len() == 32);
-    Builder::new().push_opcode(version.into()).push_slice(program).into_script()
+    let script_length = 1 /* Version */
+                        + ScriptBuf::reserved_len_for_slice(program.len()) /* <push op(s)> <program> */;
+    Builder::with_capacity(script_length).push_opcode(version.into()).push_slice(program).into_script()
 }
 
 mod sealed {
