@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use internals::write_err;
 use secp256k1::{Keypair, Message, Secp256k1, Signing, Verification};
 
-use crate::bip32::{self, KeySource, Xpriv, Xpub};
+use crate::bip32::{self, DerivationPath, Fingerprint, KeySource, Xpriv, Xpub};
 use crate::crypto::key::{PrivateKey, PublicKey};
 use crate::crypto::{ecdsa, taproot};
 use crate::key::{TapTweak, XOnlyPublicKey};
@@ -831,6 +831,44 @@ impl GetKey for Xpriv {
     }
 }
 
+impl GetKey for (Xpriv, Fingerprint, DerivationPath) {
+    type Error = GetKeyError;
+
+    fn get_key<C: Signing>(
+        &self,
+        key_request: &KeyRequest,
+        secp: &Secp256k1<C>,
+    ) -> Result<Option<PrivateKey>, Self::Error> {
+        match key_request {
+            KeyRequest::Pubkey(_) => Err(GetKeyError::NotSupported),
+            KeyRequest::XOnlyPubkey(_) => Err(GetKeyError::NotSupported),
+            KeyRequest::Bip32((fingerprint, path)) => {
+                if *fingerprint != self.1 {
+                    return Ok(None);
+                }
+
+                let prefix: DerivationPath = self
+                    .2
+                    .as_ref()
+                    .iter()
+                    .zip(path.as_ref().iter())
+                    .take_while(|(a, b)| a == b)
+                    .map(|(a, _b)| *a)
+                    .collect();
+
+                if prefix.len() != self.2.len() {
+                    return Ok(None);
+                }
+
+                self.0
+                    .derive_xpriv(secp, &path[prefix.len()..])
+                    .map(|xpriv| Some(xpriv.to_private_key()))
+                    .map_err(GetKeyError::Bip32)
+            }
+        }
+    }
+}
+
 /// Map of input index -> signing key for that input (see [`SigningKeys`]).
 pub type SigningKeysMap = BTreeMap<usize, SigningKeys>;
 
@@ -1338,7 +1376,7 @@ mod tests {
 
     use super::*;
     use crate::address::script_pubkey::ScriptExt as _;
-    use crate::bip32::{ChildNumber, DerivationPath};
+    use crate::bip32::ChildNumber;
     use crate::locktime::absolute;
     use crate::network::NetworkKind;
     use crate::psbt::serialize::{Deserialize, Serialize};
@@ -2415,6 +2453,41 @@ mod tests {
             .unwrap();
 
         assert_eq!(derived_key, Some(expected_private_key));
+    }
+
+    #[test]
+    fn get_key_bip32_derived_xpriv() {
+        let secp = Secp256k1::new();
+
+        let seed = hex!("000102030405060708090a0b0c0d0e0f");
+        let master_xpriv: Xpriv = Xpriv::new_master(NetworkKind::Main, &seed);
+        let master_fingerprint = master_xpriv.fingerprint(&secp);
+
+        let known_secrets = {
+            let known_xpriv_path: DerivationPath = "m/1'/2/3".parse().unwrap();
+            let known_xpriv = master_xpriv.derive_xpriv(&secp, &known_xpriv_path).unwrap();
+
+            (known_xpriv, master_fingerprint, known_xpriv_path)
+        };
+
+        let expected_key = |path: &str| {
+            let path: DerivationPath = path.parse().unwrap();
+
+            Some(master_xpriv.derive_xpriv(&secp, path).unwrap().to_private_key())
+        };
+
+        let get_key = |path: &str| {
+            let path: DerivationPath = path.parse().unwrap();
+            known_secrets.get_key(&KeyRequest::Bip32((master_fingerprint, path)), &secp).unwrap()
+        };
+
+        assert_eq!(get_key("m/1'/2/3"), expected_key("m/1'/2/3"));
+        assert_eq!(get_key("m/1'/2/3/4"), expected_key("m/1'/2/3/4"));
+        assert_eq!(get_key("m/1'/2/3/4/5"), expected_key("m/1'/2/3/4/5"));
+
+        assert_eq!(get_key("m/1'/2"), None);
+        assert_eq!(get_key("m/1'/2/4"), None);
+        assert_eq!(get_key("m/1'/2/4/4/5"), None);
     }
 
     #[test]
